@@ -4,190 +4,224 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>卷帘门控制中心</title>
-
 <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
-
 <style>
-body {
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto;
-    background: #f4f6f9;
-    margin: 0;
-    padding: 15px;
-}
-
-.container {
-    max-width: 480px;
-    margin: auto;
-    background: #fff;
-    padding: 20px;
-    border-radius: 16px;
-    box-shadow: 0 8px 20px rgba(0,0,0,0.08);
-}
-
-h2 {
-    text-align: center;
-    margin-bottom: 20px;
-}
-
-.badge {
-    padding: 6px 12px;
-    border-radius: 20px;
-    color: #fff;
-    font-size: 13px;
-}
-
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto; background: #f4f6f9; margin: 0; padding: 15px; }
+.container { max-width: 480px; margin: auto; background: #fff; padding: 20px; border-radius: 16px; box-shadow: 0 8px 20px rgba(0,0,0,0.08); }
+h2 { text-align: center; margin-bottom: 20px; }
+.status-container { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; font-size: 14px; color: #555; }
+.badge { padding: 6px 12px; border-radius: 20px; color: #fff; font-size: 13px; font-weight: bold; }
 .online { background: #34c759; }
 .offline { background: #ff3b30; }
-
-.btn {
-    width: 100%;
-    padding: 14px;
-    margin: 8px 0;
-    border: none;
-    border-radius: 10px;
-    font-size: 16px;
-    color: #fff;
-}
-
+.door-state { font-size: 24px; font-weight: bold; text-align: center; margin: 15px 0; color: #333; padding: 10px; background: #f8f9fa; border-radius: 8px; }
+.btn { width: 100%; padding: 14px; margin: 8px 0; border: none; border-radius: 10px; font-size: 16px; color: #fff; font-weight: bold; cursor: pointer; transition: 0.1s; }
+.btn:active { transform: scale(0.98); opacity: 0.9; }
 .up { background: #007aff; }
 .down { background: #ff9500; }
 .stop { background: #ff3b30; }
 .ota { background: #5856d6; }
-
-.card {
-    margin-top: 15px;
-    padding: 15px;
-    border: 1px solid #eee;
-    border-radius: 12px;
-}
-
-input {
-    width: 100%;
-    padding: 10px;
-    margin-top: 6px;
-    border-radius: 8px;
-    border: 1px solid #ccc;
-}
+.card { margin-top: 15px; padding: 15px; border: 1px solid #eee; border-radius: 12px; background: #fafafa; }
+label { display: block; margin-top: 10px; font-size: 14px; color: #666; font-weight: bold; }
+input[type="time"] { width: 95%; padding: 10px; margin-top: 6px; border-radius: 8px; border: 1px solid #ccc; font-size: 16px; }
+input[type="checkbox"] { transform: scale(1.3); margin-top: 10px; margin-left: 5px; }
+.id-btn { font-size: 12px; background: none; border: 1px solid #999; color: #666; padding: 3px 8px; border-radius: 4px; cursor: pointer; }
 </style>
 </head>
-
 <body>
 
-<div class="container">
 
+<div class="container">
 <h2>🚪 卷帘门控制中心</h2>
 
-<div>设备状态：
-    <span id="status" class="badge offline">离线</span>
+
+<div class="status-container">
+    <div>服务器：<span id="status" class="badge offline">断开</span></div>
+    <div>设备ID: <span id="currentIdDisplay" style="font-weight:bold;color:#007aff;">-</span> <button class="id-btn" onclick="changeDeviceId()">修改</button></div>
 </div>
 
-<button class="btn up" onclick="send('UP')">⬆ 上升</button>
-<button class="btn down" onclick="send('DOWN')">⬇ 下降</button>
-<button class="btn stop" onclick="send('STOP')">⏹ 停止</button>
+
+<div id="doorStateDisplay" class="door-state">⚪ 状态同步中...</div>
+
+
+<button class="btn up" onclick="send('UP')">▲ 开启卷帘门 (上升)</button>
+<button class="btn down" onclick="send('DOWN')">▼ 关闭卷帘门 (下降)</button>
+<button class="btn stop" onclick="send('STOP')">⏹ 紧急停止</button>
+
 
 <div class="card">
-    <h3>⏰ 定时设置</h3>
-
-    <label>启用</label>
-    <input type="checkbox" id="enable">
-
-    <label>开始时间</label>
+    <h3>⏰ 智能自动定时</h3>
+    <div style="display: flex; align-items: center;">
+        <label style="margin: 0;">是否启用定时：</label>
+        <input type="checkbox" id="enable">
+    </div>
+    
+    <label>自动开门时间 (上升)</label>
     <input type="time" id="start" value="08:00">
 
-    <label>结束时间</label>
+
+    <label>自动关门时间 (下降)</label>
     <input type="time" id="end" value="18:00">
 
-    <button class="btn up" onclick="saveTimer()">保存定时</button>
+
+    <button class="btn up" style="margin-top: 15px; background: #34c759;" onclick="saveTimer()">💾 保存配置并同步到门</button>
 </div>
+
 
 <div class="card">
-    <h3>系统维护</h3>
-    <button class="btn ota" onclick="send('OTA')">远程OTA升级</button>
+    <h3>⚙️ 系统维护</h3>
+    <button class="btn ota" onclick="triggerOTA()">🚀 远程 OTA 固件无线升级</button>
+</div>
 </div>
 
-</div>
 
 <script>
+// ================= 📦 商业级设备ID记忆存储逻辑 =================
+let deviceId = localStorage.getItem("user_door_id");
 
-// ================= 设备ID（必须唯一） =================
-const deviceId = prompt("请输入设备ID（如 door_123456）");
 
-// MQTT主题（必须和ESP一致）
+if (!deviceId) {
+    deviceId = prompt("请输入您产品外壳上的设备ID\n（例如: door_123456）");
+    if (deviceId) {
+        deviceId = deviceId.trim();
+        localStorage.setItem("user_door_id", deviceId);
+    } else {
+        deviceId = "door_unknown";
+    }
+}
+document.getElementById("currentIdDisplay").innerText = deviceId;
+
+
+function changeDeviceId() {
+    const newId = prompt("请输入新的设备ID:", deviceId);
+    if (newId && newId.trim() !== "") {
+        localStorage.setItem("user_door_id", newId.trim());
+        location.reload(); 
+    }
+}
+
+
+// MQTT 通道完美咬合单片机
 const cmdTopic = `door/${deviceId}/cmd`;
 const statusTopic = `door/${deviceId}/status`;
 
-// ================= MQTT连接 =================
+
+// ================= 💡 修复：改用 Serverless 标准的 443 端口 =================
 const client = mqtt.connect(
-    "wss://b7fea2bf.ala.asia-southeast1.emqxsl.com:8084/mqtt",
+    "wss://b7fea2bf.ala.asia-southeast1.emqxsl.com:443/mqtt",
     {
-        clientId: "web_" + Math.random().toString(16).substr(2, 8),
+        clientId: "web_client_" + Math.random().toString(16).substr(2, 8),
         username: "eps8266nn",
         password: "yu155414"
     }
 );
 
-let lastSeen = 0;
 
-// ================= 连接成功 =================
+let lastSeen = 0;
+let isDeviceOnline = false;
+
+
+// ================= 连接服务器成功 =================
 client.on("connect", () => {
-    console.log("MQTT已连接");
+    console.log("MQTT服务器已成功握手");
+    document.getElementById("status").className = "badge online";
+    document.getElementById("status").innerText = "已连云端";
+
 
     client.subscribe(statusTopic);
 
-    setTimeout(() => {
-        send("STATUS");
-    }, 500);
+
+    // 进网页立刻主动向单片机要一次当前状态
+    setTimeout(() => { send("STATUS"); }, 500);
 });
 
-// ================= 接收数据 =================
+
+client.on("close", () => {
+    document.getElementById("status").className = "badge offline";
+    document.getElementById("status").innerText = "断开";
+});
+
+
+// ================= 📥 核心：动态接收并刷新门状态的看板 =================
 client.on("message", (topic, msg) => {
-    const data = msg.toString();
+    const data = msg.toString().trim();
+    console.log("收到设备反馈原始数据: " + data);
+    
+    // 刷新心跳存活时间
     lastSeen = Date.now();
+    isDeviceOnline = true;
 
-    document.getElementById("status").className = "badge online";
-    document.getElementById("status").innerText = "在线";
 
-    if (data === "UP_OK") console.log("上升中");
-    if (data === "DOWN_OK") console.log("下降中");
-    if (data === "STOP_OK") console.log("已停止");
+    const display = document.getElementById("doorStateDisplay");
 
+
+    // 解析单片机当前真实运行状态
+    if (data === "UP" || data === "UP_OK") {
+        display.innerHTML = "<span style='color: #007aff'>▲ 正在升门...</span>";
+    } 
+    else if (data === "DOWN" || data === "DOWN_OK") {
+        display.innerHTML = "<span style='color: #ff9500'>▼ 正在关门...</span>";
+    } 
+    else if (data === "STOP" || data === "STOP_OK" || data === "ONLINE" || data === "IDLE") {
+        display.innerHTML = "<span style='color: #34c759'>⏹ 门已就绪（停止）</span>";
+    }
+    else if (data === "TIMEOUT_STOP") {
+        display.innerHTML = "<span style='color: #ff3b30'>⚠ 15秒超时强行保护停止</span>";
+    }
+    else if (data === "OTA_START") {
+        display.innerHTML = "<span style='color: #5856d6'>⏳ 正在无线升级固件，请勿切断电源...</span>";
+    }
+
+
+    // 解析单片机返回的定时配置（预留后续单片机扩展功能）
     if (data.startsWith("TIMER_INFO_")) {
         const p = data.split("_");
-
         document.getElementById("enable").checked = (p[2] === "1");
         document.getElementById("start").value = p[3];
         document.getElementById("end").value = p[4];
     }
-
-    if (data === "ONLINE") {
-        console.log("设备在线");
-    }
 });
 
-// ================= 离线检测 =================
+
+// ================= 💡 设备真实离线（30秒收不到心跳）检测 =================
 setInterval(() => {
-    if (Date.now() - lastSeen > 30000) {
-        document.getElementById("status").className = "badge offline";
-        document.getElementById("status").innerText = "离线";
+    const display = document.getElementById("doorStateDisplay");
+    // 如果开机从未收到过消息，或者超过30秒没收到单片机动静
+    if (lastSeen === 0 || (Date.now() - lastSeen > 30000)) {
+        isDeviceOnline = false;
+        display.innerHTML = "<span style='color: #ff3b30'>🔴 设备已离线或未通电</span>";
     }
-}, 3000);
+}, 4000);
+
 
 // ================= 发送命令 =================
 function send(cmd) {
-    client.publish(cmdTopic, cmd);
+    if(client.connected) {
+        client.publish(cmdTopic, cmd, { qos: 1 });
+        console.log("发出指令: " + cmd);
+    } else {
+        alert("网页尚未连上云端，请检查网络！");
+    }
 }
 
-// ================= 定时器 =================
+
+// 定时保存
 function saveTimer() {
     const e = document.getElementById("enable").checked ? 1 : 0;
     const s = document.getElementById("start").value;
     const t = document.getElementById("end").value;
 
+
     send(`SET_TIMER_${e}_${s}_${t}`);
-    alert("已同步到设备");
+    alert("定时配置指令已发送，正在同步至设备...");
 }
 
-</script>
 
+// OTA升级防误触提示
+function triggerOTA() {
+    if(confirm("确定要对该设备远程升级最新商业固件吗？\n升级期间设备会短暂重启。")) {
+        send('OTA');
+    }
+}
+</script>
 </body>
 </html>
