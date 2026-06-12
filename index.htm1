@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>卷帘门控制中心</title>
+
+<script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+
+<style>
+body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto;
+    background: #f4f6f9;
+    margin: 0;
+    padding: 15px;
+}
+
+.container {
+    max-width: 480px;
+    margin: auto;
+    background: #fff;
+    padding: 20px;
+    border-radius: 16px;
+    box-shadow: 0 8px 20px rgba(0,0,0,0.08);
+}
+
+h2 {
+    text-align: center;
+    margin-bottom: 20px;
+}
+
+.badge {
+    padding: 6px 12px;
+    border-radius: 20px;
+    color: #fff;
+    font-size: 13px;
+}
+
+.online { background: #34c759; }
+.offline { background: #ff3b30; }
+
+.btn {
+    width: 100%;
+    padding: 14px;
+    margin: 8px 0;
+    border: none;
+    border-radius: 10px;
+    font-size: 16px;
+    color: #fff;
+}
+
+.up { background: #007aff; }
+.down { background: #ff9500; }
+.stop { background: #ff3b30; }
+.ota { background: #5856d6; }
+
+.card {
+    margin-top: 15px;
+    padding: 15px;
+    border: 1px solid #eee;
+    border-radius: 12px;
+}
+
+input {
+    width: 100%;
+    padding: 10px;
+    margin-top: 6px;
+    border-radius: 8px;
+    border: 1px solid #ccc;
+}
+</style>
+</head>
+
+<body>
+
+<div class="container">
+
+<h2>🚪 卷帘门控制中心</h2>
+
+<div>设备状态：
+    <span id="status" class="badge offline">离线</span>
+</div>
+
+<button class="btn up" onclick="send('UP')">⬆ 上升</button>
+<button class="btn down" onclick="send('DOWN')">⬇ 下降</button>
+<button class="btn stop" onclick="send('STOP')">⏹ 停止</button>
+
+<div class="card">
+    <h3>⏰ 定时设置</h3>
+
+    <label>启用</label>
+    <input type="checkbox" id="enable">
+
+    <label>开始时间</label>
+    <input type="time" id="start" value="08:00">
+
+    <label>结束时间</label>
+    <input type="time" id="end" value="18:00">
+
+    <button class="btn up" onclick="saveTimer()">保存定时</button>
+</div>
+
+<div class="card">
+    <h3>系统维护</h3>
+    <button class="btn ota" onclick="send('OTA')">远程OTA升级</button>
+</div>
+
+</div>
+
+<script>
+
+// ================= 设备ID（必须唯一） =================
+const deviceId = prompt("请输入设备ID（如 door_123456）");
+
+// MQTT主题（必须和ESP一致）
+const cmdTopic = `door/${deviceId}/cmd`;
+const statusTopic = `door/${deviceId}/status`;
+
+// ================= MQTT连接 =================
+const client = mqtt.connect(
+    "wss://b7fea2bf.ala.asia-southeast1.emqxsl.com:8084/mqtt",
+    {
+        clientId: "web_" + Math.random().toString(16).substr(2, 8),
+        username: "eps8266nn",
+        password: "yu155414"
+    }
+);
+
+let lastSeen = 0;
+
+// ================= 连接成功 =================
+client.on("connect", () => {
+    console.log("MQTT已连接");
+
+    client.subscribe(statusTopic);
+
+    setTimeout(() => {
+        send("STATUS");
+    }, 500);
+});
+
+// ================= 接收数据 =================
+client.on("message", (topic, msg) => {
+    const data = msg.toString();
+    lastSeen = Date.now();
+
+    document.getElementById("status").className = "badge online";
+    document.getElementById("status").innerText = "在线";
+
+    if (data === "UP_OK") console.log("上升中");
+    if (data === "DOWN_OK") console.log("下降中");
+    if (data === "STOP_OK") console.log("已停止");
+
+    if (data.startsWith("TIMER_INFO_")) {
+        const p = data.split("_");
+
+        document.getElementById("enable").checked = (p[2] === "1");
+        document.getElementById("start").value = p[3];
+        document.getElementById("end").value = p[4];
+    }
+
+    if (data === "ONLINE") {
+        console.log("设备在线");
+    }
+});
+
+// ================= 离线检测 =================
+setInterval(() => {
+    if (Date.now() - lastSeen > 30000) {
+        document.getElementById("status").className = "badge offline";
+        document.getElementById("status").innerText = "离线";
+    }
+}, 3000);
+
+// ================= 发送命令 =================
+function send(cmd) {
+    client.publish(cmdTopic, cmd);
+}
+
+// ================= 定时器 =================
+function saveTimer() {
+    const e = document.getElementById("enable").checked ? 1 : 0;
+    const s = document.getElementById("start").value;
+    const t = document.getElementById("end").value;
+
+    send(`SET_TIMER_${e}_${s}_${t}`);
+    alert("已同步到设备");
+}
+
+</script>
+
+</body>
+</html>
