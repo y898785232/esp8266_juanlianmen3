@@ -14,7 +14,8 @@
     .online { background: #34c759; }
     .offline { background: #ff3b30; }
     .door-state { font-size: 26px; font-weight: bold; text-align: center; margin: 20px 0; padding: 15px; border-radius: 12px; background: #f8f9fa; }
-    
+
+
     .btn { width: 100%; padding: 16px; margin: 8px 0; border: none; border-radius: 12px; font-size: 17px; font-weight: bold; color: #fff; cursor: pointer; }
     .btn:active { transform: scale(0.97); }
     .up    { background: #007aff; }
@@ -45,7 +46,7 @@
 
 
     <!-- 主控制 -->
-    <button class="btn up" onclick="sendCommand('UP')">▲ 上升 / 开门</button>
+    <button class="btn up"   onclick="sendCommand('UP')">▲ 上升 / 开门</button>
     <button class="btn down" onclick="sendCommand('DOWN')">▼ 下降 / 关门</button>
     <button class="btn stop" onclick="sendCommand('STOP')">⏹ 停止</button>
 
@@ -53,8 +54,10 @@
     <!-- 学习区 -->
     <div class="card">
         <h3>📡 遥控器学习</h3>
-        <p style="font-size:14px;color:#666;margin:8px 0;">点击下方按钮后，在10秒内按原遥控器对应按键</p>
-        
+        <!-- ✅ 修复：提示时间改为12秒，与ESP8266代码一致 -->
+        <p style="font-size:14px;color:#666;margin:8px 0;">点击下方按钮后，在12秒内按原遥控器对应按键</p>
+
+
         <div class="learn-grid">
             <button class="btn learn" onclick="startLearn('LEARN_UP')">学习 ↑</button>
             <button class="btn learn" onclick="startLearn('LEARN_DOWN')">学习 ↓</button>
@@ -72,7 +75,7 @@
 
 
 <script>
-// ==================== 配置 ====================
+// ==================== 设备ID配置 ====================
 let deviceId = localStorage.getItem("user_door_id");
 
 
@@ -85,7 +88,7 @@ if (!deviceId) {
 document.getElementById("deviceIdDisplay").innerText = deviceId;
 
 
-const cmdTopic = `door/${deviceId}/cmd`;
+const cmdTopic    = `door/${deviceId}/cmd`;
 const statusTopic = `door/${deviceId}/status`;
 
 
@@ -105,7 +108,8 @@ client.on("connect", () => {
     console.log("✅ 已连接到 MQTT");
     document.getElementById("status").className = "badge online";
     document.getElementById("status").innerText = "已连接";
-    
+
+
     client.subscribe(statusTopic, { qos: 1 });
     setTimeout(() => sendCommand("STATUS"), 600);
 });
@@ -134,21 +138,29 @@ client.on("message", (topic, message) => {
     } else if (msg === "STOP_OK" || msg === "STOP") {
         display.innerHTML = `<span style="color:#34c759">⏹ 已停止</span>`;
     } else if (msg === "LEARNING") {
-        display.innerHTML = `<span style="color:#5856d6">📡 正在学习遥控器信号...</span>`;
+        display.innerHTML = `<span style="color:#5856d6">📡 正在学习遥控器信号，请在12秒内按原按键...</span>`;
     } else if (msg === "LEARN_OK") {
-        display.innerHTML = `<span style="color:#34c759">✅ 学习成功！</span>`;
+        display.innerHTML = `<span style="color:#34c759">✅ 学习成功！已保存</span>`;
     } else if (msg === "LEARN_TIMEOUT") {
-        display.innerHTML = `<span style="color:#ff3b30">⏰ 学习超时</span>`;
-    } else if (msg === "LEARN_MODE" || msg === "LEARN_MANUAL") {
-        display.innerHTML = `<span style="color:#5856d6">📡 请按原遥控器按钮</span>`;
+        display.innerHTML = `<span style="color:#ff3b30">⏰ 学习超时，请重试</span>`;
+    } else if (msg === "ONLINE") {
+        // ✅ 新增：设备上线提示
+        display.innerHTML = `<span style="color:#34c759">🟢 设备已上线</span>`;
+    } else if (msg === "OTA_START") {
+        // ✅ 新增：OTA状态反馈
+        display.innerHTML = `<span style="color:#ff9500">🚀 正在升级固件，请勿断电...</span>`;
+    } else if (msg === "OTA_OK") {
+        display.innerHTML = `<span style="color:#34c759">✅ 升级成功，设备重启中...</span>`;
+    } else if (msg === "OTA_FAIL") {
+        display.innerHTML = `<span style="color:#ff3b30">❌ 升级失败，请重试</span>`;
     }
 });
 
 
-// 离线检测
+// ✅ 修复：离线检测改为6分钟，避免5分钟心跳误报
 setInterval(() => {
-    if (Date.now() - lastSeen > 35000) {
-        document.getElementById("doorStateDisplay").innerHTML = 
+    if (lastSeen > 0 && Date.now() - lastSeen > 360000) {
+        document.getElementById("doorStateDisplay").innerHTML =
             `<span style="color:#ff3b30">🔴 设备离线或未通电</span>`;
     }
 }, 5000);
@@ -166,7 +178,9 @@ function sendCommand(cmd) {
 
 
 function startLearn(type) {
-    if (confirm(`确定要学习【${type === 'LEARN_UP' ? '上升' : type === 'LEARN_DOWN' ? '下降' : '停止'}】按键吗？\n\n请在点击确定后10秒内按原遥控器对应按钮`)) {
+    const label = type === 'LEARN_UP' ? '上升' : type === 'LEARN_DOWN' ? '下降' : '停止';
+    // ✅ 修复：confirm提示改为12秒
+    if (confirm(`确定要学习【${label}】按键吗？\n\n请在点击确定后12秒内按原遥控器对应按钮`)) {
         sendCommand(type);
     }
 }
