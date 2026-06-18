@@ -3,194 +3,415 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>卷帘门远程控制</title>
-<script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+<title>卷帘门控制台</title>
+<script src="https://unpkg.com/mqtt@5.3.4/dist/mqtt.min.js"></script>
 <style>
-    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto; background: #f4f6f9; margin: 0; padding: 15px; }
-    .container { max-width: 480px; margin: auto; background: #fff; padding: 20px; border-radius: 16px; box-shadow: 0 8px 25px rgba(0,0,0,0.1); }
-    h2 { text-align: center; margin-bottom: 20px; color: #333; }
-    .status-container { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; font-size: 14px; }
-    .badge { padding: 6px 12px; border-radius: 20px; color: #fff; font-size: 13px; font-weight: bold; }
-    .online { background: #34c759; }
-    .offline { background: #ff3b30; }
-    .door-state { font-size: 26px; font-weight: bold; text-align: center; margin: 20px 0; padding: 15px; border-radius: 12px; background: #f8f9fa; }
-
-
-    .btn { width: 100%; padding: 16px; margin: 8px 0; border: none; border-radius: 12px; font-size: 17px; font-weight: bold; color: #fff; cursor: pointer; }
-    .btn:active { transform: scale(0.97); }
-    .up    { background: #007aff; }
-    .down  { background: #ff9500; }
-    .stop  { background: #ff3b30; }
-    .learn { background: #5856d6; }
-    .ota   { background: #34c759; }
-
-
-    .card { margin-top: 20px; padding: 18px; background: #fafafa; border-radius: 12px; border: 1px solid #eee; }
-    .learn-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-top: 10px; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: #0f1117; min-height: 100vh;
+    display: flex; align-items: center; justify-content: center;
+    padding: 16px; color: #e5e7eb;
+  }
+  .app { width: 100%; max-width: 440px; }
+  .header { text-align: center; margin-bottom: 24px; }
+  .header h1 { font-size: 22px; font-weight: 700; color: #fff; }
+  .header .subtitle { font-size: 12px; color: #6b7280; margin-top: 4px; }
+  .card {
+    background: #1c1f2e; border: 1px solid #2a2d3e;
+    border-radius: 20px; padding: 20px; margin-bottom: 14px;
+  }
+  .status-bar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; }
+  .dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    display: inline-block; margin-right: 6px; transition: background 0.4s;
+  }
+  .dot.online     { background: #22c55e; box-shadow: 0 0 6px #22c55e; }
+  .dot.offline    { background: #6b7280; }
+  .dot.error      { background: #ef4444; }
+  .dot.connecting { background: #f59e0b; animation: pulse 1s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
+  .conn-label { font-size: 13px; font-weight: 500; }
+  .device-tag {
+    font-size: 11px; color: #60a5fa; background: #1e3a5f;
+    border-radius: 6px; padding: 3px 8px; font-family: monospace; cursor: pointer;
+  }
+  .device-tag:hover { background: #1e4a7a; }
+  .door-display {
+    text-align: center; padding: 28px 20px; border-radius: 16px;
+    background: #111318; border: 1px solid #2a2d3e; margin-bottom: 20px;
+    min-height: 110px; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; transition: border-color 0.3s;
+  }
+  .door-icon { font-size: 44px; margin-bottom: 8px; }
+  .door-text { font-size: 16px; font-weight: 600; }
+  .door-sub  { font-size: 12px; color: #6b7280; margin-top: 4px; }
+  .state-up   .door-display { border-color: #3b82f6; }
+  .state-down .door-display { border-color: #f97316; }
+  .state-stop .door-display { border-color: #22c55e; }
+  .state-error .door-display { border-color: #ef4444; }
+  .ctrl-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px; }
+  .ctrl-grid .stop-btn { grid-column: span 2; }
+  .btn {
+    width: 100%; padding: 16px; border: none; border-radius: 14px;
+    font-size: 16px; font-weight: 700; color: #fff; cursor: pointer;
+    transition: transform 0.1s, opacity 0.2s;
+    display: flex; align-items: center; justify-content: center; gap: 8px;
+  }
+  .btn:active   { transform: scale(0.96); }
+  .btn:disabled { opacity: 0.35; cursor: not-allowed; }
+  .btn-up    { background: linear-gradient(135deg,#2563eb,#3b82f6); }
+  .btn-down  { background: linear-gradient(135deg,#ea580c,#f97316); }
+  .btn-stop  { background: linear-gradient(135deg,#dc2626,#ef4444); }
+  .btn-learn { background: linear-gradient(135deg,#7c3aed,#8b5cf6); }
+  .btn-ota   { background: linear-gradient(135deg,#059669,#10b981); }
+  .btn-ghost {
+    background: transparent; border: 1px solid #374151;
+    color: #9ca3af; font-size: 13px; font-weight: 500; padding: 10px;
+  }
+  .btn-ghost:hover { border-color: #6b7280; color: #d1d5db; }
+  .section-title {
+    font-size: 12px; font-weight: 600; color: #6b7280;
+    text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 14px;
+  }
+  .learn-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
+  .learn-grid .btn { font-size: 13px; padding: 13px 8px; }
+  .countdown-wrap {
+    display: none; margin-top: 14px; background: #111318;
+    border-radius: 10px; padding: 14px 16px; border: 1px solid #7c3aed44;
+  }
+  .countdown-wrap.active { display: block; }
+  .countdown-label { font-size: 13px; color: #a78bfa; margin-bottom: 8px; font-weight: 500; }
+  .countdown-bar-bg { height: 6px; background: #2a2d3e; border-radius: 3px; overflow: hidden; }
+  .countdown-bar-fill {
+    height: 100%; background: linear-gradient(90deg,#7c3aed,#a78bfa);
+    border-radius: 3px; transition: width 1s linear;
+  }
+  .countdown-secs { font-size: 11px; color: #6b7280; margin-top: 6px; text-align: right; }
+  .offline-badge {
+    display: none; align-items: center; gap: 6px; font-size: 12px;
+    color: #ef4444; background: #1f1010; border: 1px solid #ef444433;
+    border-radius: 8px; padding: 8px 12px; margin-bottom: 14px;
+  }
+  .offline-badge.visible { display: flex; }
+  .ota-hint { font-size: 12px; color: #6b7280; margin-top: 8px; text-align: center; display: none; }
+  .ota-hint.active { display: block; }
+  #toast {
+    position: fixed; bottom: 24px; left: 50%;
+    transform: translateX(-50%) translateY(60px);
+    background: #1c1f2e; border: 1px solid #2a2d3e; color: #e5e7eb;
+    padding: 12px 20px; border-radius: 12px; font-size: 14px; font-weight: 500;
+    white-space: nowrap; transition: transform 0.3s ease; z-index: 999;
+    box-shadow: 0 8px 30px rgba(0,0,0,0.4);
+  }
+  #toast.show { transform: translateX(-50%) translateY(0); }
+  .modal-overlay {
+    display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.7);
+    z-index: 100; align-items: center; justify-content: center; padding: 16px;
+  }
+  .modal-overlay.open { display: flex; }
+  .modal {
+    background: #1c1f2e; border: 1px solid #2a2d3e;
+    border-radius: 20px; padding: 24px; width: 100%; max-width: 360px;
+  }
+  .modal h3 { font-size: 16px; font-weight: 700; margin-bottom: 8px; }
+  .modal p  { font-size: 13px; color: #9ca3af; margin-bottom: 16px; line-height: 1.5; }
+  .modal input {
+    width: 100%; background: #111318; border: 1px solid #374151;
+    border-radius: 10px; padding: 12px 14px; font-size: 14px;
+    color: #e5e7eb; font-family: monospace; margin-bottom: 12px; outline: none;
+  }
+  .modal input:focus { border-color: #3b82f6; }
+  .modal .btn { font-size: 15px; padding: 13px; }
 </style>
 </head>
 <body>
 
+<div class="app" id="stateRoot">
+  <div class="header">
+    <h1>🚪 卷帘门控制台</h1>
+    <div class="subtitle">通过 MQTT 远程控制</div>
+  </div>
 
-<div class="container">
-    <h2>🚪 卷帘门远程控制</h2>
-
-
-    <div class="status-container">
-        <div>状态：<span id="status" class="badge offline">断开</span></div>
-        <div>设备ID: <span id="deviceIdDisplay" style="font-weight:bold;color:#007aff;"></span></div>
+  <div class="card" style="padding:14px 18px;">
+    <div class="status-bar">
+      <div style="display:flex;align-items:center;">
+        <span class="dot connecting" id="dot"></span>
+        <span class="conn-label" id="connLabel">连接中...</span>
+      </div>
+      <span class="device-tag" id="deviceTag" onclick="openSetup()" title="点击修改设备ID">--</span>
     </div>
 
-
-    <div id="doorStateDisplay" class="door-state">⚪ 等待设备状态...</div>
-
-
-    <!-- 主控制 -->
-    <button class="btn up"   onclick="sendCommand('UP')">▲ 上升 / 开门</button>
-    <button class="btn down" onclick="sendCommand('DOWN')">▼ 下降 / 关门</button>
-    <button class="btn stop" onclick="sendCommand('STOP')">⏹ 停止</button>
-
-
-    <!-- 学习区 -->
-    <div class="card">
-        <h3>📡 遥控器学习</h3>
-        <!-- ✅ 修复：提示时间改为12秒，与ESP8266代码一致 -->
-        <p style="font-size:14px;color:#666;margin:8px 0;">点击下方按钮后，在12秒内按原遥控器对应按键</p>
-
-
-        <div class="learn-grid">
-            <button class="btn learn" onclick="startLearn('LEARN_UP')">学习 ↑</button>
-            <button class="btn learn" onclick="startLearn('LEARN_DOWN')">学习 ↓</button>
-            <button class="btn learn" onclick="startLearn('LEARN_STOP')">学习 ⏹</button>
-        </div>
+    <div class="offline-badge" id="offlineBadge">
+      ⚠️ 设备超过 6 分钟无响应，可能已离线或断电
     </div>
 
-
-    <!-- 系统维护 -->
-    <div class="card">
-        <h3>⚙️ 系统维护</h3>
-        <button class="btn ota" onclick="triggerOTA()">🚀 远程 OTA 升级</button>
+    <div class="door-display" id="doorDisplay">
+      <div class="door-icon" id="doorIcon">⚪</div>
+      <div class="door-text" id="doorText">等待设备状态...</div>
+      <div class="door-sub"  id="doorSub"></div>
     </div>
+
+    <div class="ctrl-grid">
+      <button class="btn btn-up"   onclick="sendCommand('UP')">▲ 上升 / 开门</button>
+      <button class="btn btn-down" onclick="sendCommand('DOWN')">▼ 下降 / 关门</button>
+      <button class="btn btn-stop stop-btn" onclick="sendCommand('STOP')">⏹ 停止</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="section-title">📡 遥控器学习</div>
+    <div class="learn-grid">
+      <button class="btn btn-learn" onclick="startLearn('LEARN_UP',   '上升 ▲')">学习 ↑</button>
+      <button class="btn btn-learn" onclick="startLearn('LEARN_DOWN', '下降 ▼')">学习 ↓</button>
+      <button class="btn btn-learn" onclick="startLearn('LEARN_STOP', '停止 ⏹')">学习 ⏹</button>
+    </div>
+    <div class="countdown-wrap" id="countdownWrap">
+      <div class="countdown-label" id="countdownLabel"></div>
+      <div class="countdown-bar-bg">
+        <div class="countdown-bar-fill" id="countdownFill" style="width:100%"></div>
+      </div>
+      <div class="countdown-secs" id="countdownSecs">12 秒</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="section-title">⚙️ 系统维护</div>
+    <button class="btn btn-ota" onclick="triggerOTA()" id="otaBtn">🚀 远程 OTA 升级</button>
+    <div class="ota-hint" id="otaHint">固件升级中，请勿断电…</div>
+    <div style="margin-top:10px;">
+      <button class="btn btn-ghost" onclick="sendCommand('STATUS')">刷新状态</button>
+    </div>
+  </div>
 </div>
 
+<!-- 设备ID弹窗 -->
+<div class="modal-overlay" id="setupModal">
+  <div class="modal">
+    <h3>🔧 输入设备 ID</h3>
+    <p>设备 ID 可从 ESP8266 串口监视器中找到，格式为<br>
+       <code style="color:#60a5fa">door_XXXXXXXX</code>（芯片 ID 十六进制）。</p>
+    <input type="text" id="deviceInput" placeholder="door_2f3a4b5c" spellcheck="false" />
+    <button class="btn btn-up" onclick="applyDeviceId()">确认连接</button>
+    <div style="margin-top:8px;">
+      <button class="btn btn-ghost" onclick="closeSetup()">取消</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
 
 <script>
-// ==================== 设备ID配置 ====================
-let deviceId = localStorage.getItem("user_door_id");
+const BROKER_WSS = "wss://b7fea2bf.ala.asia-southeast1.emqxsl.com:8084/mqtt";
+const MQTT_USER  = "eps8266nn";
+const MQTT_PASS  = "yu155414";
+const LEARN_SECS = 12;
+const OFFLINE_MS = 360000;
 
-
-if (!deviceId) {
-    deviceId = prompt("请输入设备ID（例如: door_2f3a4b5c）", "door_");
-    if (deviceId) localStorage.setItem("user_door_id", deviceId);
-}
-
-
-document.getElementById("deviceIdDisplay").innerText = deviceId;
-
-
-const cmdTopic    = `door/${deviceId}/cmd`;
-const statusTopic = `door/${deviceId}/status`;
-
-
-const client = mqtt.connect("wss://b7fea2bf.ala.asia-southeast1.emqxsl.com:8084/mqtt", {
-    clientId: "web_" + Math.random().toString(16).substr(2, 8),
-    username: "eps8266nn",
-    password: "yu155414",
-    reconnectPeriod: 4000
-});
-
-
+let deviceId = localStorage.getItem("door_device_id") || "";
+let cmdTopic, statusTopic;
+let client = null;
 let lastSeen = 0;
+let countdownTimer = null;
+let countdownSecs = 0;
+let offlineTimer = null;
 
+function buildTopics() {
+  cmdTopic    = `door/${deviceId}/cmd`;
+  statusTopic = `door/${deviceId}/status`;
+}
 
-// ==================== 连接 ====================
-client.on("connect", () => {
-    console.log("✅ 已连接到 MQTT");
-    document.getElementById("status").className = "badge online";
-    document.getElementById("status").innerText = "已连接";
+function init() {
+  if (!deviceId) { openSetup(); return; }
+  buildTopics();
+  updateDeviceTag();
+  connectMQTT();
+}
 
-
-    client.subscribe(statusTopic, { qos: 1 });
+function connectMQTT() {
+  if (client) { try { client.end(true); } catch(_) {} }
+  setConnStatus("connecting");
+  client = mqtt.connect(BROKER_WSS, {
+    clientId: "web_" + Math.random().toString(16).slice(2, 10),
+    username: MQTT_USER,
+    password: MQTT_PASS,
+    reconnectPeriod: 4000,
+    connectTimeout: 8000,
+  });
+  client.on("connect", () => {
+    setConnStatus("online");
+    client.subscribe(statusTopic,      { qos: 1 });
+    client.subscribe("door/discovery", { qos: 0 });
     setTimeout(() => sendCommand("STATUS"), 600);
-});
+  });
+  client.on("close",     () => setConnStatus("offline"));
+  client.on("reconnect", () => setConnStatus("connecting"));
+  client.on("error",     (err) => { console.error(err); setConnStatus("error"); });
+  client.on("message", onMessage);
+}
 
+function onMessage(topic, payload) {
+  const msg = payload.toString().trim();
 
-client.on("close", () => {
-    document.getElementById("status").className = "badge offline";
-    document.getElementById("status").innerText = "已断开";
-});
-
-
-// ==================== 接收消息 ====================
-client.on("message", (topic, message) => {
-    const msg = message.toString().trim();
-    console.log("收到设备消息:", msg);
-    lastSeen = Date.now();
-
-
-    const display = document.getElementById("doorStateDisplay");
-
-
-    if (msg === "UP_OK" || msg === "UP") {
-        display.innerHTML = `<span style="color:#007aff">▲ 正在上升...</span>`;
-    } else if (msg === "DOWN_OK" || msg === "DOWN") {
-        display.innerHTML = `<span style="color:#ff9500">▼ 正在下降...</span>`;
-    } else if (msg === "STOP_OK" || msg === "STOP") {
-        display.innerHTML = `<span style="color:#34c759">⏹ 已停止</span>`;
-    } else if (msg === "LEARNING") {
-        display.innerHTML = `<span style="color:#5856d6">📡 正在学习遥控器信号，请在12秒内按原按键...</span>`;
-    } else if (msg === "LEARN_OK") {
-        display.innerHTML = `<span style="color:#34c759">✅ 学习成功！已保存</span>`;
-    } else if (msg === "LEARN_TIMEOUT") {
-        display.innerHTML = `<span style="color:#ff3b30">⏰ 学习超时，请重试</span>`;
-    } else if (msg === "ONLINE") {
-        // ✅ 新增：设备上线提示
-        display.innerHTML = `<span style="color:#34c759">🟢 设备已上线</span>`;
-    } else if (msg === "OTA_START") {
-        // ✅ 新增：OTA状态反馈
-        display.innerHTML = `<span style="color:#ff9500">🚀 正在升级固件，请勿断电...</span>`;
-    } else if (msg === "OTA_OK") {
-        display.innerHTML = `<span style="color:#34c759">✅ 升级成功，设备重启中...</span>`;
-    } else if (msg === "OTA_FAIL") {
-        display.innerHTML = `<span style="color:#ff3b30">❌ 升级失败，请重试</span>`;
+  // 自动发现设备ID
+  if (topic === "door/discovery") {
+    if (!deviceId && msg.startsWith("door_")) {
+      deviceId = msg;
+      localStorage.setItem("door_device_id", deviceId);
+      buildTopics();
+      updateDeviceTag();
+      client.subscribe(statusTopic, { qos: 1 });
+      toast("✅ 自动发现设备: " + deviceId);
+      sendCommand("STATUS");
     }
-});
+    return;
+  }
 
+  lastSeen = Date.now();
+  resetOfflineWatch();
 
-// ✅ 修复：离线检测改为6分钟，避免5分钟心跳误报
-setInterval(() => {
-    if (lastSeen > 0 && Date.now() - lastSeen > 360000) {
-        document.getElementById("doorStateDisplay").innerHTML =
-            `<span style="color:#ff3b30">🔴 设备离线或未通电</span>`;
-    }
-}, 5000);
+  switch (msg) {
+    case "UP": case "UP_OK":
+      setDoor("up",    "▲", "正在上升…", "门正在打开"); break;
+    case "DOWN": case "DOWN_OK":
+      setDoor("down",  "▼", "正在下降…", "门正在关闭"); break;
+    case "STOP": case "STOP_OK":
+      setDoor("stop",  "✅", "已停止", "门已定位"); break;
+    case "ONLINE":
+      setDoor("stop",  "🟢", "设备已上线", ""); break;
+    case "LEARNING":
+      setDoor("",      "📡", "学习模式", "请按原遥控器按键…"); break;
+    case "LEARN_OK":
+      stopCountdown();
+      setDoor("stop",  "✅", "学习成功！", "信号已保存");
+      toast("✅ 遥控器信号学习成功"); break;
+    case "LEARN_TIMEOUT":
+      stopCountdown();
+      setDoor("error", "⏰", "学习超时", "请重试");
+      toast("⏰ 学习超时，未收到信号"); break;
+    case "NOT_LEARNED":
+      setDoor("error", "⚠️", "未学习遥控码", "请先完成学习步骤");
+      toast("⚠️ 尚未学习遥控信号，请先学习"); break;
+    case "OTA_START":
+      setDoor("", "🚀", "固件升级中…", "请勿断电");
+      document.getElementById("otaHint").classList.add("active"); break;
+    case "OTA_OK":
+      setDoor("stop", "✅", "升级成功", "设备重启中…");
+      document.getElementById("otaHint").classList.remove("active");
+      toast("✅ 固件升级成功"); break;
+    case "OTA_FAIL":
+      setDoor("error", "❌", "升级失败", "请重试");
+      document.getElementById("otaHint").classList.remove("active");
+      toast("❌ 固件升级失败"); break;
+  }
+}
 
-
-// ==================== 发送指令 ====================
 function sendCommand(cmd) {
-    if (client.connected) {
-        client.publish(cmdTopic, cmd, { qos: 1 });
-        console.log("发送指令:", cmd);
-    } else {
-        alert("未连接到服务器，请刷新页面");
-    }
+  if (!client || !client.connected) { toast("⚠️ 未连接，请稍候"); return; }
+  if (!deviceId) { openSetup(); return; }
+  client.publish(cmdTopic, cmd, { qos: 1 });
 }
 
-
-function startLearn(type) {
-    const label = type === 'LEARN_UP' ? '上升' : type === 'LEARN_DOWN' ? '下降' : '停止';
-    // ✅ 修复：confirm提示改为12秒
-    if (confirm(`确定要学习【${label}】按键吗？\n\n请在点击确定后12秒内按原遥控器对应按钮`)) {
-        sendCommand(type);
-    }
+function startLearn(type, label) {
+  if (!confirm(`确定学习【${label}】按键？\n点击确定后请在 ${LEARN_SECS} 秒内按下原遥控器对应按钮。`)) return;
+  sendCommand(type);
+  startCountdown(label);
 }
-
 
 function triggerOTA() {
-    if (confirm("确定要进行远程固件升级吗？\n升级期间设备会重启。")) {
-        sendCommand("OTA");
-    }
+  if (!confirm("确定进行远程固件升级？\n升级期间设备会重启，请勿断电。")) return;
+  sendCommand("OTA");
 }
+
+function startCountdown(label) {
+  stopCountdown();
+  countdownSecs = LEARN_SECS;
+  const wrap = document.getElementById("countdownWrap");
+  const fill = document.getElementById("countdownFill");
+  const secs = document.getElementById("countdownSecs");
+  document.getElementById("countdownLabel").textContent =
+    `正在学习"${label}"信号…请在 ${LEARN_SECS} 秒内按原遥控器对应按键`;
+  wrap.classList.add("active");
+  fill.style.width = "100%";
+  secs.textContent = LEARN_SECS + " 秒";
+  countdownTimer = setInterval(() => {
+    countdownSecs--;
+    fill.style.width = (countdownSecs / LEARN_SECS * 100) + "%";
+    secs.textContent = countdownSecs + " 秒";
+    if (countdownSecs <= 0) stopCountdown();
+  }, 1000);
+}
+
+function stopCountdown() {
+  if (countdownTimer) { clearInterval(countdownTimer); countdownTimer = null; }
+  document.getElementById("countdownWrap").classList.remove("active");
+}
+
+function setConnStatus(state) {
+  document.getElementById("dot").className = "dot " + state;
+  const map = { online:"已连接", offline:"已断开", connecting:"连接中…", error:"连接错误" };
+  document.getElementById("connLabel").textContent = map[state] || state;
+}
+
+function setDoor(stateClass, icon, text, sub) {
+  document.getElementById("stateRoot").className = stateClass ? "app state-" + stateClass : "app";
+  document.getElementById("doorIcon").textContent = icon;
+  document.getElementById("doorText").textContent = text;
+  document.getElementById("doorSub").textContent  = sub;
+}
+
+function updateDeviceTag() {
+  document.getElementById("deviceTag").textContent = deviceId || "未设置";
+}
+
+function resetOfflineWatch() {
+  document.getElementById("offlineBadge").classList.remove("visible");
+  if (offlineTimer) clearTimeout(offlineTimer);
+  offlineTimer = setTimeout(() => {
+    if (Date.now() - lastSeen > OFFLINE_MS)
+      document.getElementById("offlineBadge").classList.add("visible");
+  }, OFFLINE_MS + 1000);
+}
+
+let toastTimer = null;
+function toast(msg) {
+  const el = document.getElementById("toast");
+  el.textContent = msg;
+  el.classList.add("show");
+  if (toastTimer) clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove("show"), 3000);
+}
+
+function openSetup() {
+  document.getElementById("deviceInput").value = deviceId;
+  document.getElementById("setupModal").classList.add("open");
+  setTimeout(() => document.getElementById("deviceInput").focus(), 100);
+}
+
+function closeSetup() {
+  document.getElementById("setupModal").classList.remove("open");
+}
+
+function applyDeviceId() {
+  const val = document.getElementById("deviceInput").value.trim();
+  if (!val || !val.startsWith("door_")) {
+    toast("⚠️ 格式不对，应为 door_XXXXXXXX");
+    return;
+  }
+  deviceId = val;
+  localStorage.setItem("door_device_id", deviceId);
+  buildTopics();
+  updateDeviceTag();
+  closeSetup();
+  connectMQTT();
+  toast("✅ 已切换设备: " + deviceId);
+}
+
+document.getElementById("deviceInput").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") applyDeviceId();
+});
+
+init();
 </script>
 </body>
 </html>
