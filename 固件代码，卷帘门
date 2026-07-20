@@ -1,0 +1,301 @@
+#include <ESP8266WiFi.h>
+#include <PubSubClient.h>
+#include <WiFiManager.h>
+#include <RCSwitch.h>
+#include <time.h>
+#include <ESP8266httpUpdate.h>
+#include <EEPROM.h>
+
+// ===================== 硬件引脚 =====================
+#define RF_TX_PIN    D5
+#define RF_RX_PIN    D6
+
+// ===================== MQTT =====================
+const char* mqtt_server = "gugukeji.cc.cd";
+const int   mqtt_port   = 30384;
+const char* mqtt_user   = "ESP8266";
+const char* mqtt_pass   = "yuwen665085";
+
+const char* firmware_url = "http://esp8266-yuyu-ota.oss-cn-hangzhou.aliyuncs.com/firmware_door3.bin";
+
+// ===================== RF =====================
+RCSwitch mySwitch = RCSwitch();
+
+// ===================== 系统变量 =====================
+WiFiClient espClient;          // ← 这里改了
+PubSubClient mqttClient(espClient);
+
+String deviceId;
+String topic_cmd;
+String topic_status;
+String topic_discovery = "door/discovery";
+
+String currentState = "STOP";
+
+struct RFCode {
+  unsigned long code;
+  unsigned int  length;
+  unsigned int  protocol;
+};
+
+RFCode upCode   = {0, 0, 0};
+RFCode downCode = {0, 0, 0};
+RFCode stopCode = {0, 0, 0};
+
+bool learningMode = false;
+unsigned long learnStartTime = 0;
+int currentLearningButton = 0;  // 1=UP 2=DOWN 3=STOP
+
+unsigned long lastReconnectAttempt = 0;
+unsigned long lastHeartbeatTime = 0;
+const unsigned long HEARTBEAT_INTERVAL = 300000UL;  // 5分钟
+
+// EEPROM
+#define EEPROM_SIZE  64
+#define EEPROM_MAGIC 0xAB
+
+// 433硬件自检开关（测试完改成 false 重新烧录）
+#define ENABLE_433_TEST false
+
+// ===================== EEPROM =====================
+void saveRFCodes() {
+  EEPROM.begin(EEPROM_SIZE);
+  int addr = 0;
+  EEPROM.write(addr++, EEPROM_MAGIC);
+  EEPROM.put(addr, upCode);   addr += sizeof(RFCode);
+  EEPROM.put(addr, downCode); addr += sizeof(RFCode);
+  EEPROM.put(addr, stopCode);
+  EEPROM.commit();
+  EEPROM.end();
+  Serial.println("RF saved to EEPROM");
+}
+
+void loadRFCodes() {
+  EEPROM.begin(EEPROM_SIZE);
+  int addr = 0;
+  byte magic = EEPROM.read(addr++);
+  if (magic == EEPROM_MAGIC) {
+    EEPROM.get(addr, upCode);   addr += sizeof(RFCode);
+    EEPROM.get(addr, downCode); addr += sizeof(RFCode);
+    EEPROM.get(addr, stopCode);
+    Serial.println("RF loaded from EEPROM");
+    Serial.printf("UP:   code=%lu bits=%d proto=%d\n", upCode.code,   upCode.length,   upCode.protocol);
+    Serial.printf("DOWN: code=%lu bits=%d proto=%d\n", downCode.code, downCode.length, downCode.protocol);
+    Serial.printf("STOP: code=%lu bits=%d proto=%d\n", stopCode.code, stopCode.length, stopCode.protocol);
+  } else {
+    Serial.println("EEPROM empty, need learn");
+  }
+  EEPROM.end();
+}
+
+// ===================== 433硬件自检 =====================
+void test433Hardware() {
+  Serial.println("===== 433MHz Hardware Self-Test =====");
+  mySwitch.setProtocol(1);
+  for (int i = 0; i < 5; i++) {
+    mySwitch.send(12345, 24);
+    Serial.printf("[TX] Sent #%d code=12345\n", i + 1);
+    delay(500);
+  }
+  Serial.println("[RX] Listening 15s, press remote now...");
+  unsigned long testStart = millis();
+  int received = 0;
+  while (millis() - testStart < 15000) {
+    if (mySwitch.available()) {
+      unsigned long code = mySwitch.getReceivedValue();
+      unsigned int  bits = mySwitch.getReceivedBitlength();
+      unsigned int  proto = mySwitch.getReceivedProtocol();
+      if (code != 0) {
+        received++;
+        Serial.printf("[RX] Code:%lu Bits:%d Protocol:%d\n", code, bits, proto);
+      }
+      mySwitch.resetAvailable();
+    }
+    delay(10);
+  }
+  Serial.printf("[RX] Result: %s (%d signals)\n", received > 0 ? "SUCCESS" : "FAILED", received);
+}
+
+// ===================== 初始化 =====================
+void setup() {
+  Serial.begin(115200);
+  delay(100);
+
+  mySwitch.enableTransmit(RF_TX_PIN);
+  mySwitch.enableReceive(RF_RX_PIN);
+  mySwitch.setRepeatTransmit(10);
+
+  deviceId      = "door_" + String(ESP.getChipId(), HEX);
+  topic_cmd     = "door/" + deviceId + "/cmd";
+  topic_status  = "door/" + deviceId + "/status";
+
+  Serial.print("Device ID: ");
+  Serial.println(deviceId);
+
+  WiFiManager wm;
+  wm.autoConnect("ROLLER_DOOR");
+
+  configTime(28800, 0, "ntp.aliyun.com", "pool.ntp.org");
+  time_t now = time(nullptr);
+  while (now < 8 * 3600 * 2) { delay(500); now = time(nullptr); }
+
+
+  mqttClient.setServer(mqtt_server, mqtt_port);
+  mqttClient.setCallback(mqttCallback);
+  mqttClient.setKeepAlive(60);
+
+  loadRFCodes();
+
+  if (ENABLE_433_TEST) test433Hardware();
+
+  lastHeartbeatTime = millis();
+  Serial.println("System ready");
+}
+
+// ===================== 发送RF码（修复：返回是否成功）=====================
+bool sendRF(RFCode &rf) {
+  if (rf.code == 0) {
+    Serial.println("RF not learned yet!");
+    return false;
+  }
+  mySwitch.setProtocol(rf.protocol);
+  mySwitch.send(rf.code, rf.length);
+  Serial.printf("RF sent: %lu proto:%d bits:%d\n", rf.code, rf.protocol, rf.length);
+  return true;
+}
+
+// ===================== MQTT 回调 =====================
+void mqttCallback(char* topic, byte* payload, unsigned int length) {
+  char msg[64] = {0};
+  if (length < 63) memcpy(msg, payload, length);
+  String cmd = String(msg);
+
+  Serial.print("CMD: "); Serial.println(cmd);
+
+  if (cmd == "UP") {
+    if (learningMode) return;
+    if (sendRF(upCode)) {
+      currentState = "UP";
+      mqttClient.publish(topic_status.c_str(), "UP_OK", true);
+    } else {
+      // ✅ 修复：未学习时反馈错误而非假装成功
+      mqttClient.publish(topic_status.c_str(), "NOT_LEARNED", true);
+    }
+  }
+  else if (cmd == "DOWN") {
+    if (learningMode) return;
+    if (sendRF(downCode)) {
+      currentState = "DOWN";
+      mqttClient.publish(topic_status.c_str(), "DOWN_OK", true);
+    } else {
+      mqttClient.publish(topic_status.c_str(), "NOT_LEARNED", true);
+    }
+  }
+  else if (cmd == "STOP") {
+    if (learningMode) return;
+    if (sendRF(stopCode)) {
+      currentState = "STOP";
+      mqttClient.publish(topic_status.c_str(), "STOP_OK", true);
+    } else {
+      mqttClient.publish(topic_status.c_str(), "NOT_LEARNED", true);
+    }
+  }
+  else if (cmd == "LEARN_UP")   { startLearning(1); }
+  else if (cmd == "LEARN_DOWN") { startLearning(2); }
+  else if (cmd == "LEARN_STOP") { startLearning(3); }
+  else if (cmd == "STATUS") {
+    mqttClient.publish(topic_status.c_str(), currentState.c_str(), true);
+  }
+  else if (cmd == "OTA")     { handleOTA(); }
+  else if (cmd == "TEST433") { test433Hardware(); }
+}
+
+void startLearning(int button) {
+  currentLearningButton = button;
+  learningMode = true;
+  learnStartTime = millis();
+  Serial.printf("Learning button %d, press remote in 12s...\n", button);
+  if (mqttClient.connected())
+    mqttClient.publish(topic_status.c_str(), "LEARNING", true);
+}
+
+void handleOTA() {
+  mqttClient.publish(topic_status.c_str(), "OTA_START", true);
+  WiFiClient client;
+  t_httpUpdate_return ret = ESPhttpUpdate.update(client, firmware_url);
+  if (ret == HTTP_UPDATE_OK) {
+    mqttClient.publish(topic_status.c_str(), "OTA_OK", true);
+    delay(1500);
+    ESP.restart();
+  } else {
+    Serial.printf("OTA FAIL: %d\n", ESPhttpUpdate.getLastError());
+    mqttClient.publish(topic_status.c_str(), "OTA_FAIL", true);
+  }
+}
+
+// ===================== WiFi & MQTT 重连 =====================
+void ensureWiFi() {
+  if (WiFi.status() != WL_CONNECTED) {
+    WiFi.reconnect();
+    delay(500);
+  }
+}
+
+bool checkMQTTConnection() {
+  if (mqttClient.connected()) return true;
+  if (millis() - lastReconnectAttempt > 5000) {
+    lastReconnectAttempt = millis();
+    if (mqttClient.connect(deviceId.c_str(), mqtt_user, mqtt_pass)) {
+      mqttClient.subscribe(topic_cmd.c_str());
+      // ✅ 上线时广播设备ID，让网页自动发现
+      mqttClient.publish(topic_discovery.c_str(), deviceId.c_str(), false);
+      mqttClient.publish(topic_status.c_str(), "ONLINE", true);
+      return true;
+    }
+  }
+  return false;
+}
+
+// ===================== 主循环 =====================
+void loop() {
+  ensureWiFi();
+  checkMQTTConnection();
+
+  if (mqttClient.connected()) mqttClient.loop();
+
+  // RF 学习接收
+  if (learningMode) {
+    if (mySwitch.available()) {
+      unsigned long received = mySwitch.getReceivedValue();
+      unsigned int  bits     = mySwitch.getReceivedBitlength();
+      unsigned int  protocol = mySwitch.getReceivedProtocol();
+
+      if (received != 0 && bits > 8) {
+        Serial.printf("Learn OK! Code:%lu Bits:%d Protocol:%d\n", received, bits, protocol);
+        RFCode newCode = {received, bits, protocol};
+        if      (currentLearningButton == 1) upCode   = newCode;
+        else if (currentLearningButton == 2) downCode = newCode;
+        else if (currentLearningButton == 3) stopCode = newCode;
+
+        learningMode = false;
+        saveRFCodes();
+        mqttClient.publish(topic_status.c_str(), "LEARN_OK", true);
+      }
+      mySwitch.resetAvailable();
+    }
+
+    if (millis() - learnStartTime > 12000) {
+      learningMode = false;
+      mqttClient.publish(topic_status.c_str(), "LEARN_TIMEOUT", true);
+    }
+  }
+
+  // 5分钟心跳
+  if (millis() - lastHeartbeatTime >= HEARTBEAT_INTERVAL) {
+    lastHeartbeatTime = millis();
+    if (mqttClient.connected())
+      mqttClient.publish(topic_status.c_str(), currentState.c_str(), true);
+  }
+
+  delay(10);
+}
